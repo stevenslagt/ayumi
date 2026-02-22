@@ -1,14 +1,532 @@
 <!DOCTYPE html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="あゆみ ayumi" />
-    <title>あゆみ ayumi</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-title" content="あゆみ ayumi"/>
+  <title>あゆみ ayumi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#1a0a00}
+    ::-webkit-scrollbar{width:8px;background:#2b1400}
+    ::-webkit-scrollbar-thumb{background:#5a3010;border-radius:2px}
+    select,input,textarea{font-family:'Noto Sans JP',sans-serif!important}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+    @keyframes flicker{0%,100%{opacity:1}92%{opacity:.96}94%{opacity:1}96%{opacity:.94}}
+    @keyframes pulse{0%,100%{box-shadow:0 0 8px #e8a020}50%{box-shadow:0 0 20px #e8a020}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const c = {
+  bg:"#1a0a00", paper:"#2b1400", card:"#3a1c00",
+  gold:"#e8a020", goldDim:"#a06010", amber:"#f0c060",
+  red:"#c03020", green:"#406030", greenLit:"#70a050",
+  text:"#f0d090", muted:"#907040", border:"#5a3010",
+};
+
+const VIEWS = { HOME:"home", ALBUM:"album", ADD:"add", STUDY:"study" };
+
+function storageGet(key) {
+  try { const v=localStorage.getItem(key); return v?JSON.parse(v):null; } catch { return null; }
+}
+function storageSet(key,val) {
+  try { localStorage.setItem(key,JSON.stringify(val)); } catch {}
+}
+
+async function callClaude(prompt, systemPrompt) {
+  const res = await fetch("/api/claude", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({prompt,systemPrompt})
+  });
+  const data = await res.json();
+  if(data.error) throw new Error(data.error);
+  return data.text;
+}
+
+const pixel = (size=10,color=c.gold) => ({
+  fontFamily:"'Press Start 2P',monospace", fontSize:size, color, lineHeight:1.8, letterSpacing:1
+});
+const jp = (size=16,color=c.text) => ({
+  fontFamily:"'Noto Sans JP',sans-serif", fontSize:size, color, lineHeight:1.6
+});
+
+function Btn({children,onClick,disabled,color="gold",full,small,style:sx={}}) {
+  const [hover,setHover]=useState(false);
+  const bg=color==="gold"?c.gold:color==="red"?c.red:color==="green"?c.green:c.card;
+  const bdr=color==="ghost"?`2px solid ${c.goldDim}`:`2px solid ${color==="gold"?c.amber:color==="red"?"#e05040":color==="green"?c.greenLit:c.border}`;
+  return (
+    <button onClick={onClick} disabled={disabled}
+      onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}
+      style={{
+        ...pixel(small?7:8,color==="ghost"?c.gold:"#1a0a00"),
+        background:hover&&!disabled?(color==="ghost"?c.card:bg+"cc"):(color==="ghost"?"transparent":bg),
+        border:bdr, borderRadius:0, padding:small?"6px 10px":"10px 18px",
+        cursor:disabled?"not-allowed":"pointer", opacity:disabled?0.4:1,
+        width:full?"100%":"auto", display:"inline-block", textAlign:"center",
+        transition:"background .1s", color:color==="ghost"?c.gold:"#1a0a00", ...sx
+      }}>{children}</button>
+  );
+}
+
+function Panel({children,title,style:sx={}}) {
+  return (
+    <div style={{border:`2px solid ${c.border}`,background:c.paper,
+      boxShadow:`inset 0 0 0 1px ${c.goldDim}33,4px 4px 0 #00000088`,...sx}}>
+      {title&&<div style={{background:c.card,borderBottom:`2px solid ${c.border}`,
+        padding:"6px 14px",...pixel(8,c.amber)}}>▌ {title}</div>}
+      <div style={{padding:16}}>{children}</div>
+    </div>
+  );
+}
+
+function Input({value,onChange,placeholder,multiline,rows=6}) {
+  const s={background:"#110800",color:c.text,border:`2px solid ${c.border}`,
+    borderRadius:0,padding:"8px 12px",width:"100%",
+    fontFamily:"'Noto Sans JP',sans-serif",fontSize:14,
+    outline:"none",resize:"vertical",boxShadow:"inset 0 2px 8px #00000088"};
+  return multiline
+    ? <textarea value={value} onChange={onChange} placeholder={placeholder} rows={rows} style={s}/>
+    : <input value={value} onChange={onChange} placeholder={placeholder} style={s}/>;
+}
+
+function RetroSelect({label,value,onChange,options}) {
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <span style={pixel(7,c.muted)}>{label}:</span>
+      <select value={value} onChange={e=>onChange(e.target.value)} style={{
+        background:c.card,color:c.amber,border:`2px solid ${c.border}`,
+        padding:"4px 8px",fontFamily:"'Press Start 2P',monospace",fontSize:7,
+        cursor:"pointer",outline:"none"}}>
+        {options.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function Screen({children}) {
+  return (
+    <div style={{minHeight:"100vh",background:c.bg,
+      backgroundImage:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.15) 2px,rgba(0,0,0,0.15) 4px)",
+      display:"flex",flexDirection:"column",alignItems:"center",
+      padding:"24px 16px",fontFamily:"'Noto Sans JP',sans-serif",color:c.text,
+      animation:"flicker 8s infinite"}}>
+      {children}
+    </div>
+  );
+}
+
+function AppHeader() {
+  return (
+    <div style={{textAlign:"center",marginBottom:28}}>
+      <div style={{...pixel(22,c.gold),textShadow:`0 0 10px ${c.gold},0 0 30px ${c.goldDim}`,marginBottom:6,letterSpacing:4}}>あゆみ</div>
+      <div style={pixel(9,c.amber)}>A Y U M I</div>
+      <div style={{...jp(12,c.muted),marginTop:6}}>♪ Learn Japanese Through Music ♪</div>
+      <div style={{height:2,background:`linear-gradient(90deg,transparent,${c.gold},transparent)`,marginTop:12}}/>
+    </div>
+  );
+}
+
+function PixelBar({pct,color=c.gold}) {
+  return (
+    <div style={{background:"#110800",border:`1px solid ${c.border}`,height:10,position:"relative"}}>
+      <div style={{width:`${pct}%`,height:"100%",
+        background:`repeating-linear-gradient(90deg,${color} 0px,${color} 6px,${color}99 6px,${color}99 8px)`,
+        transition:"width .4s"}}/>
+    </div>
+  );
+}
+
+function App() {
+  const [view,setView]=useState(VIEWS.HOME);
+  const [albums,setAlbums]=useState([]);
+  const [activeAlbum,setActiveAlbum]=useState(null);
+  const [activeSong,setActiveSong]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [newAlbumName,setNewAlbumName]=useState("");
+  const [addingAlbum,setAddingAlbum]=useState(false);
+
+  useEffect(()=>{
+    const saved=storageGet("ayumi-albums");
+    if(saved)setAlbums(saved);
+    setLoading(false);
+  },[]);
+
+  const saveAlbums=u=>{setAlbums(u);storageSet("ayumi-albums",u);};
+  const addAlbum=()=>{
+    if(!newAlbumName.trim())return;
+    saveAlbums([...albums,{id:Date.now().toString(),name:newAlbumName.trim(),songs:[]}]);
+    setNewAlbumName("");setAddingAlbum(false);
+  };
+  const deleteAlbum=id=>saveAlbums(albums.filter(a=>a.id!==id));
+  const addSongToAlbum=(albumId,song)=>
+    saveAlbums(albums.map(a=>a.id===albumId?{...a,songs:[...a.songs,song]}:a));
+  const deleteSong=(albumId,songId)=>
+    saveAlbums(albums.map(a=>a.id===albumId?{...a,songs:a.songs.filter(s=>s.id!==songId)}:a));
+  const updateProgress=(albumId,songId,wordIdx,status)=>
+    saveAlbums(albums.map(a=>a.id!==albumId?a:{...a,songs:a.songs.map(s=>s.id!==songId?s:{
+      ...s,words:s.words.map((w,i)=>i===wordIdx?{...w,status}:w)
+    })}));
+
+  if(loading)return <Screen><p style={{...pixel(9,c.muted),marginTop:80}}>LOADING...</p></Screen>;
+
+  if(view===VIEWS.ADD&&activeAlbum)return(
+    <AddSong album={activeAlbum} onBack={()=>setView(VIEWS.ALBUM)}
+      onAdd={song=>{addSongToAlbum(activeAlbum.id,song);setView(VIEWS.ALBUM);}}/>
+  );
+  if(view===VIEWS.STUDY&&activeAlbum&&activeSong){
+    const live=albums.find(a=>a.id===activeAlbum.id)?.songs.find(s=>s.id===activeSong.id)||activeSong;
+    return <StudyMode song={live} onBack={()=>{setView(VIEWS.ALBUM);setActiveSong(null);}}
+      onProgress={(i,st)=>updateProgress(activeAlbum.id,live.id,i,st)}/>;
+  }
+  if(view===VIEWS.ALBUM&&activeAlbum){
+    const live=albums.find(a=>a.id===activeAlbum.id)||activeAlbum;
+    return <AlbumView album={live} onBack={()=>{setView(VIEWS.HOME);setActiveAlbum(null);}}
+      onAddSong={()=>setView(VIEWS.ADD)}
+      onStudy={song=>{setActiveSong(song);setView(VIEWS.STUDY);}}
+      onDeleteSong={id=>deleteSong(live.id,id)}/>;
+  }
+
+  return (
+    <Screen>
+      <AppHeader/>
+      <div style={{width:"100%",maxWidth:620}}>
+        <div style={{marginBottom:20}}>
+          {addingAlbum?(
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <Input value={newAlbumName} onChange={e=>setNewAlbumName(e.target.value)} placeholder="ALBUM NAME..."/>
+              <Btn onClick={addAlbum} small>OK</Btn>
+              <Btn onClick={()=>{setAddingAlbum(false);setNewAlbumName("");}} color="ghost" small>✕</Btn>
+            </div>
+          ):(
+            <Btn onClick={()=>setAddingAlbum(true)} full>[ + NEW ALBUM ]</Btn>
+          )}
+        </div>
+        {albums.length===0
+          ?<Panel><p style={pixel(8,c.muted)}>NO ALBUMS FOUND.<br/><br/>INSERT COIN TO CONTINUE...</p></Panel>
+          :<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {albums.map(a=><AlbumCard key={a.id} album={a}
+              onOpen={()=>{setActiveAlbum(a);setView(VIEWS.ALBUM);}}
+              onDelete={()=>deleteAlbum(a.id)}/>)}
+          </div>
+        }
+      </div>
+    </Screen>
+  );
+}
+
+function AlbumCard({album,onOpen,onDelete}) {
+  const total=album.songs.reduce((a,s)=>a+s.words.length,0);
+  const done=album.songs.reduce((a,s)=>a+s.words.filter(w=>w.status==="remembered").length,0);
+  const pct=total?Math.round(done/total*100):0;
+  return (
+    <div style={{border:`2px solid ${c.border}`,background:c.paper,boxShadow:"4px 4px 0 #00000088",display:"flex",alignItems:"center"}}>
+      <div style={{background:c.card,padding:"0 14px",alignSelf:"stretch",display:"flex",alignItems:"center",borderRight:`2px solid ${c.border}`,fontSize:26}}>💿</div>
+      <div style={{flex:1,padding:"10px 14px"}}>
+        <div style={pixel(9,c.amber)}>{album.name}</div>
+        <div style={{...jp(12,c.muted),marginTop:4}}>{album.songs.length} track{album.songs.length!==1?"s":""}  ·  {total} words</div>
+        {total>0&&<div style={{marginTop:6}}><PixelBar pct={pct}/></div>}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4,padding:"10px 12px",borderLeft:`2px solid ${c.border}`}}>
+        <Btn onClick={onOpen} small>OPEN</Btn>
+        <Btn onClick={onDelete} color="red" small>DEL</Btn>
+      </div>
+    </div>
+  );
+}
+
+function AlbumView({album,onBack,onAddSong,onStudy,onDeleteSong}) {
+  return (
+    <Screen>
+      <AppHeader/>
+      <div style={{width:"100%",maxWidth:620}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+          <Btn onClick={onBack} color="ghost" small>◀ BACK</Btn>
+          <div style={pixel(10,c.amber)}>💿 {album.name}</div>
+        </div>
+        <Btn onClick={onAddSong} full style={{marginBottom:14}}>[ + ADD TRACK ]</Btn>
+        {album.songs.length===0
+          ?<Panel><p style={pixel(8,c.muted)}>NO TRACKS YET.</p></Panel>
+          :<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {album.songs.map(s=><SongCard key={s.id} song={s} onStudy={()=>onStudy(s)} onDelete={()=>onDeleteSong(s.id)}/>)}
+          </div>
+        }
+      </div>
+    </Screen>
+  );
+}
+
+function SongCard({song,onStudy,onDelete}) {
+  const total=song.words.length;
+  const done=song.words.filter(w=>w.status==="remembered").length;
+  const pct=total?Math.round(done/total*100):0;
+  return (
+    <div style={{border:`2px solid ${c.border}`,background:c.paper,boxShadow:"4px 4px 0 #00000088",display:"flex",alignItems:"center"}}>
+      <div style={{background:c.card,padding:"0 14px",alignSelf:"stretch",display:"flex",alignItems:"center",borderRight:`2px solid ${c.border}`,fontSize:22}}>🎵</div>
+      <div style={{flex:1,padding:"10px 14px"}}>
+        <div style={pixel(8,c.text)}>{song.title}</div>
+        <div style={{...jp(12,c.muted),marginTop:2}}>{song.artist}</div>
+        <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8}}>
+          <div style={{flex:1}}><PixelBar pct={pct}/></div>
+          <span style={pixel(6,c.muted)}>{done}/{total}</span>
+        </div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:4,padding:"10px 12px",borderLeft:`2px solid ${c.border}`}}>
+        <Btn onClick={onStudy} small>STUDY</Btn>
+        <Btn onClick={onDelete} color="red" small>DEL</Btn>
+      </div>
+    </div>
+  );
+}
+
+function AddSong({album,onBack,onAdd}) {
+  const [title,setTitle]=useState("");
+  const [artist,setArtist]=useState("");
+  const [lyrics,setLyrics]=useState("");
+  const [mode,setMode]=useState("ai");
+  const [status,setStatus]=useState("");
+  const [error,setError]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  const process=async()=>{
+    if(!title.trim()||!artist.trim()){setError("ENTER TITLE AND ARTIST.");return;}
+    setBusy(true);setError("");setStatus("► FETCHING LYRICS...");
+    try {
+      let lyr="";
+      if(mode==="manual"){
+        lyr=lyrics.trim();
+        if(!lyr){setError("PASTE LYRICS FIRST.");setBusy(false);return;}
+      } else {
+        lyr=await callClaude(`Write the complete Japanese lyrics for "${title}" by ${artist}. Output ONLY the lyrics in Japanese, no commentary.`);
+      }
+      setStatus("► ANALYZING VOCABULARY... (30-60s)");
+      const raw=await callClaude(
+        `You are a Japanese language expert. Extract every unique meaningful word from these lyrics (ignore punctuation and basic particles like は、が、を、に、で、も). Rules:
+1. Verbs: Always dictionary form (辞書形). e.g. 食べた→食べる
+2. Adjectives: Plain form. e.g. 嬉しかった→嬉しい
+3. Nouns: As-is.
+4. Provide: kanji (or null), hiragana, English.
+Return ONLY valid JSON array:
+[{"kanji":"食べる","hiragana":"たべる","english":"to eat"},...]
+Lyrics:\n${lyr}`,
+        "Return only valid JSON."
+      );
+      const words=JSON.parse(raw.replace(/```json|```/g,"").trim()).map(w=>({...w,status:"new"}));
+      onAdd({id:Date.now().toString(),title:title.trim(),artist:artist.trim(),lyrics:lyr,words,createdAt:new Date().toISOString()});
+    } catch(e){setError("ERROR: "+e.message);}
+    finally{setBusy(false);setStatus("");}
+  };
+
+  return (
+    <Screen>
+      <AppHeader/>
+      <div style={{width:"100%",maxWidth:520}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+          <Btn onClick={onBack} color="ghost" small>◀ BACK</Btn>
+          <span style={pixel(9,c.amber)}>ADD TRACK → {album.name}</span>
+        </div>
+        <Panel title="TRACK INFO" style={{marginBottom:12}}>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Song title..."/>
+            <Input value={artist} onChange={e=>setArtist(e.target.value)} placeholder="Artist..."/>
+          </div>
+        </Panel>
+        <Panel title="LYRICS SOURCE" style={{marginBottom:12}}>
+          <div style={{display:"flex",gap:8,marginBottom:10}}>
+            {["ai","manual"].map(m=>(
+              <Btn key={m} onClick={()=>setMode(m)} color={mode===m?"gold":"ghost"} small>
+                {m==="ai"?"AI GENERATE":"PASTE LYRICS"}
+              </Btn>
+            ))}
+          </div>
+          {mode==="manual"&&<Input value={lyrics} onChange={e=>setLyrics(e.target.value)} placeholder="Paste Japanese lyrics here..." multiline rows={7}/>}
+        </Panel>
+        {error&&<div style={{...pixel(7,c.red),marginBottom:8,padding:8,border:`1px solid ${c.red}`}}>{error}</div>}
+        {status&&<div style={{...pixel(7,c.gold),marginBottom:8,padding:8,border:`1px solid ${c.goldDim}`,animation:"blink 1s step-end infinite"}}>{status}</div>}
+        <Btn onClick={process} disabled={busy} full>{busy?"PROCESSING...":"[ GENERATE FLASHCARDS ]"}</Btn>
+      </div>
+    </Screen>
+  );
+}
+
+function StudyMode({song,onBack,onProgress}) {
+  const [filter,setFilter]=useState("all");
+  const [displayMode,setDisplayMode]=useState("kanji");
+  const [revealMode,setRevealMode]=useState("english");
+  const [flipped,setFlipped]=useState(false);
+  const [idx,setIdx]=useState(0);
+  const [showList,setShowList]=useState(false);
+
+  const filtered=song.words.filter(w=>{
+    if(filter==="all")return true;
+    if(filter==="new")return w.status==="new";
+    if(filter==="tryAgain")return w.status==="tryAgain";
+    if(filter==="remembered")return w.status==="remembered";
+    return true;
+  });
+  const card=filtered[idx]||null;
+  const go=d=>{setFlipped(false);setIdx(i=>Math.max(0,Math.min(filtered.length-1,i+d)));};
+  const mark=st=>{
+    const gi=song.words.findIndex(w=>w.hiragana===card.hiragana&&w.english===card.english);
+    if(gi!==-1)onProgress(gi,st);
+    setFlipped(false);
+    if(idx<filtered.length-1)setIdx(i=>i+1);
+  };
+
+  const isKanjiOnly=displayMode==="kanjiOnly";
+  const front=()=>{
+    if(displayMode==="kanjiOnly"||displayMode==="kanji")return card.kanji||card.hiragana;
+    if(displayMode==="hiragana")return card.hiragana;
+    return card.english;
+  };
+  const back=()=>{
+    if(revealMode==="hiragana")return card.hiragana;
+    if(revealMode==="kanji")return card.kanji||card.hiragana;
+    return card.english;
+  };
+  const statusGlyph={new:"○",remembered:"●",tryAgain:"◐"};
+  const statusCol={new:c.muted,remembered:c.greenLit,tryAgain:c.red};
+
+  return (
+    <Screen>
+      <div style={{width:"100%",maxWidth:620}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+          <Btn onClick={onBack} color="ghost" small>◀ BACK</Btn>
+          <div>
+            <div style={pixel(9,c.amber)}>{song.title}</div>
+            <div style={jp(12,c.muted)}>{song.artist}</div>
+          </div>
+        </div>
+        <Panel style={{marginBottom:12}}>
+          <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"center"}}>
+            <RetroSelect label="SHOW" value={displayMode} onChange={setDisplayMode}
+              options={[["kanji","KANJI+KANA"],["kanjiOnly","KANJI ONLY"],["hiragana","HIRAGANA"],["english","ENGLISH"]]}/>
+            {!isKanjiOnly&&<RetroSelect label="FLIP" value={revealMode} onChange={setRevealMode}
+              options={[["english","ENGLISH"],["hiragana","HIRAGANA"],["kanji","KANJI"]]}/>}
+            <RetroSelect label="FILTER" value={filter} onChange={v=>{setFilter(v);setIdx(0);setFlipped(false);}}
+              options={[["all","ALL"],["new","NEW"],["tryAgain","TRY AGAIN"],["remembered","DONE"]]}/>
+            <Btn onClick={()=>setShowList(true)} color="ghost" small>LIST</Btn>
+          </div>
+        </Panel>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+          <div style={{flex:1}}><PixelBar pct={filtered.length?(idx+1)/filtered.length*100:0}/></div>
+          <span style={pixel(7,c.muted)}>{filtered.length?idx+1:0}/{filtered.length}</span>
+        </div>
+        {!card
+          ?<Panel><p style={pixel(8,c.muted)}>NO CARDS MATCH FILTER.</p></Panel>
+          :<>
+            <div onClick={()=>setFlipped(f=>!f)} style={{
+              border:`3px solid ${statusCol[card.status]||c.border}`,
+              background:`radial-gradient(ellipse at 50% 30%,${c.card},${c.paper})`,
+              minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+              cursor:"pointer",padding:"32px 24px",userSelect:"none",
+              boxShadow:`0 0 20px ${statusCol[card.status]||c.border}44,6px 6px 0 #00000099`,
+              position:"relative",marginBottom:14,animation:flipped?"none":"pulse 3s infinite"
+            }}>
+              <div style={{position:"absolute",top:8,right:12,...pixel(8,statusCol[card.status])}}>{statusGlyph[card.status]||"○"}</div>
+              {!flipped?(
+                <>
+                  <div style={{fontSize:56,fontFamily:"'Noto Sans JP',sans-serif",color:c.amber,
+                    textShadow:`0 0 12px ${c.gold}88`,marginBottom:8}}>{front()}</div>
+                  {displayMode==="kanji"&&card.kanji&&<div style={jp(16,c.muted)}>{card.hiragana}</div>}
+                  {isKanjiOnly&&!card.kanji&&<div style={pixel(7,c.muted)}>(NO KANJI)</div>}
+                  <div style={{...pixel(7,c.goldDim),marginTop:16,animation:"blink 1.2s step-end infinite"}}>▼ TAP TO FLIP ▼</div>
+                </>
+              ):(
+                <>
+                  {isKanjiOnly?(
+                    <>
+                      <div style={{fontSize:38,fontFamily:"'Noto Sans JP',sans-serif",color:c.gold,marginBottom:6}}>{card.hiragana}</div>
+                      <div style={{fontSize:22,fontFamily:"'Noto Sans JP',sans-serif",color:c.text}}>{card.english}</div>
+                    </>
+                  ):(
+                    <>
+                      <div style={{fontSize:48,fontFamily:"'Noto Sans JP',sans-serif",color:c.gold,
+                        textShadow:`0 0 12px ${c.gold}66`,marginBottom:8}}>{back()}</div>
+                      {revealMode==="kanji"&&card.kanji&&<div style={jp(15,c.muted)}>{card.hiragana}</div>}
+                      <div style={{...jp(12,c.muted),marginTop:8,textAlign:"center"}}>
+                        {card.kanji?`${card.kanji}  ·  `:""}ひらがな: {card.hiragana}  ·  {card.english}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+            <div style={{display:"flex",gap:10,marginBottom:10}}>
+              <Btn onClick={()=>mark("tryAgain")} color="red" full>◐ TRY AGAIN</Btn>
+              <Btn onClick={()=>mark("remembered")} color="green" full>● REMEMBERED</Btn>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <Btn onClick={()=>go(-1)} disabled={idx===0} color="ghost" small>◀ PREV</Btn>
+              <Btn onClick={()=>go(1)} disabled={idx>=filtered.length-1} color="ghost" small>NEXT ▶</Btn>
+            </div>
+          </>
+        }
+        <div style={{display:"flex",gap:8,marginTop:20}}>
+          {[["NEW",song.words.filter(w=>w.status==="new").length,c.muted,"○"],
+            ["AGAIN",song.words.filter(w=>w.status==="tryAgain").length,c.red,"◐"],
+            ["DONE",song.words.filter(w=>w.status==="remembered").length,c.greenLit,"●"]
+          ].map(([label,count,col,glyph])=>(
+            <div key={label} style={{flex:1,border:`2px solid ${c.border}`,background:c.paper,
+              padding:"10px 0",textAlign:"center",boxShadow:"3px 3px 0 #00000066"}}>
+              <div style={{...pixel(7,col),marginBottom:4}}>{glyph} {label}</div>
+              <div style={pixel(16,col)}>{count}</div>
+            </div>
+          ))}
+        </div>
+        {showList&&(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:100,
+            display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+            onClick={()=>setShowList(false)}>
+            <div style={{background:c.paper,border:`3px solid ${c.border}`,
+              boxShadow:`0 0 30px ${c.goldDim}44,8px 8px 0 #00000099`,
+              width:"100%",maxWidth:560,maxHeight:"82vh",display:"flex",flexDirection:"column"}}
+              onClick={e=>e.stopPropagation()}>
+              <div style={{background:c.card,borderBottom:`2px solid ${c.border}`,
+                padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={pixel(9,c.amber)}>▌ WORD LIST — {song.words.length} WORDS</span>
+                <Btn onClick={()=>setShowList(false)} color="red" small>✕</Btn>
+              </div>
+              <div style={{overflowY:"auto"}}>
+                {song.words.map((w,i)=>{
+                  const col={new:c.muted,remembered:c.greenLit,tryAgain:c.red}[w.status]||c.muted;
+                  const glyph={new:"○",remembered:"●",tryAgain:"◐"}[w.status]||"○";
+                  return (
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",
+                      borderBottom:`1px solid ${c.border}66`,background:i%2===0?c.paper:c.bg}}>
+                      <span style={pixel(8,col)}>{glyph}</span>
+                      <div style={{flex:"0 0 110px"}}>
+                        <div style={jp(18,c.amber)}>{w.kanji||w.hiragana}</div>
+                        {w.kanji&&<div style={jp(11,c.muted)}>{w.hiragana}</div>}
+                      </div>
+                      <div style={{...jp(13,c.text),flex:1}}>{w.english}</div>
+                      <div style={{display:"flex",gap:4}}>
+                        <Btn onClick={()=>onProgress(i,"remembered")} color={w.status==="remembered"?"green":"ghost"} small>●</Btn>
+                        <Btn onClick={()=>onProgress(i,"tryAgain")} color={w.status==="tryAgain"?"red":"ghost"} small>◐</Btn>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
 </html>
