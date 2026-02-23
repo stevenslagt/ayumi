@@ -21,6 +21,7 @@
     @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
     @keyframes flicker{0%,100%{opacity:1}92%{opacity:.96}94%{opacity:1}96%{opacity:.94}}
     @keyframes pulse{0%,100%{box-shadow:0 0 8px #e8a020}50%{box-shadow:0 0 20px #e8a020}}
+    @keyframes flamepulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
   </style>
 </head>
 <body>
@@ -33,15 +34,40 @@ const c = {
   gold:"#e8a020", goldDim:"#a06010", amber:"#f0c060",
   red:"#c03020", green:"#406030", greenLit:"#70a050",
   text:"#f0d090", muted:"#907040", border:"#5a3010",
+  fire:"#ff6b00",
 };
 
 const VIEWS = { HOME:"home", ALBUM:"album", ADD:"add", STUDY:"study" };
+const MIN_CARDS_FOR_STREAK = 5; // cards reviewed to count as a study day
 
 function storageGet(key) {
   try { const v=localStorage.getItem(key); return v?JSON.parse(v):null; } catch { return null; }
 }
 function storageSet(key,val) {
   try { localStorage.setItem(key,JSON.stringify(val)); } catch {}
+}
+
+// ── Streak helpers ─────────────────────────────────────────────────
+function getTodayStr() {
+  return new Date().toISOString().slice(0,10); // "YYYY-MM-DD"
+}
+function loadStreak() {
+  return storageGet("ayumi-streak") || { count:0, lastDate:null, todayCards:0 };
+}
+function recordCardReviewed() {
+  const s = loadStreak();
+  const today = getTodayStr();
+  const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+  let { count, lastDate, todayCards } = s;
+  todayCards = lastDate===today ? todayCards+1 : 1;
+  if(todayCards >= MIN_CARDS_FOR_STREAK) {
+    if(lastDate===today) { /* already counted */ }
+    else if(lastDate===yesterday) { count+=1; }
+    else if(lastDate===null || lastDate!==today) { count=1; }
+    lastDate=today;
+  }
+  storageSet("ayumi-streak", { count, lastDate, todayCards });
+  return { count, todayCards };
 }
 
 async function callClaude(prompt, systemPrompt) {
@@ -148,6 +174,51 @@ function PixelBar({pct,color=c.gold}) {
   );
 }
 
+// ── Streak Display ─────────────────────────────────────────────────
+function StreakBanner() {
+  const [streak,setStreak]=useState({count:0,lastDate:null,todayCards:0});
+  useEffect(()=>{ setStreak(loadStreak()); },[]);
+
+  const today=getTodayStr();
+  const isActiveToday=streak.lastDate===today&&streak.todayCards>=MIN_CARDS_FOR_STREAK;
+  const cardsLeft=Math.max(0,MIN_CARDS_FOR_STREAK-streak.todayCards);
+  const flameColor=streak.count>=7?c.fire:streak.count>=3?"#ffaa00":c.goldDim;
+
+  return (
+    <div style={{border:`2px solid ${c.border}`,background:c.paper,
+      boxShadow:"4px 4px 0 #00000088",padding:"12px 16px",
+      display:"flex",alignItems:"center",gap:16,marginBottom:16,width:"100%",maxWidth:620}}>
+      <div style={{fontSize:32,animation:isActiveToday?"flamepulse 1.5s ease-in-out infinite":"none",
+        filter:isActiveToday?`drop-shadow(0 0 8px ${flameColor})`:"grayscale(0.8)"}}>
+        🔥
+      </div>
+      <div style={{flex:1}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+          <span style={pixel(16,isActiveToday?flameColor:c.muted)}>{streak.count}</span>
+          <span style={pixel(7,c.muted)}>DAY STREAK</span>
+        </div>
+        <div style={{...jp(11,c.muted),marginTop:4}}>
+          {isActiveToday
+            ? "✓ Studied today! Keep it up!"
+            : cardsLeft>0&&streak.todayCards>0
+              ? `${cardsLeft} more cards to count today`
+              : `Review ${MIN_CARDS_FOR_STREAK} cards today to continue`
+          }
+        </div>
+      </div>
+      {streak.count>0&&(
+        <div style={{textAlign:"center"}}>
+          <div style={pixel(7,c.muted)}>BEST</div>
+          <div style={pixel(11,c.amber)}>
+            {storageGet("ayumi-streak-best")||streak.count}🔥
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 function App() {
   const [view,setView]=useState(VIEWS.HOME);
   const [albums,setAlbums]=useState([]);
@@ -188,26 +259,28 @@ function App() {
   if(view===VIEWS.STUDY&&activeAlbum&&activeSong){
     const isAll=activeAlbum.id==="__all__";
     const live=isAll
-      ? {...activeSong, words:albums.flatMap(a=>a.songs.flatMap(s=>s.words))}
-      : albums.find(a=>a.id===activeAlbum.id)?.songs.find(s=>s.id===activeSong.id)||activeSong;
+      ?{...activeSong,words:albums.flatMap(a=>a.songs.flatMap(s=>s.words))}
+      :albums.find(a=>a.id===activeAlbum.id)?.songs.find(s=>s.id===activeSong.id)||activeSong;
     const handleProgress=(wordIdx,status)=>{
+      // record for streak
+      const {count,todayCards}=recordCardReviewed();
+      // update best streak
+      const best=storageGet("ayumi-streak-best")||0;
+      if(count>best)storageSet("ayumi-streak-best",count);
       if(isAll){
-        // find which album/song this word belongs to by matching index
-        let count=0;
+        let cnt=0;
         for(const a of albums){
           for(const s of a.songs){
-            if(wordIdx<count+s.words.length){
-              updateProgress(a.id,s.id,wordIdx-count,status);
-              return;
-            }
-            count+=s.words.length;
+            if(wordIdx<cnt+s.words.length){updateProgress(a.id,s.id,wordIdx-cnt,status);return;}
+            cnt+=s.words.length;
           }
         }
       } else {
         updateProgress(activeAlbum.id,live.id,wordIdx,status);
       }
     };
-    return <StudyMode song={live} onBack={()=>{setView(isAll?VIEWS.HOME:VIEWS.ALBUM);setActiveSong(null);}}
+    return <StudyMode song={live}
+      onBack={()=>{setView(isAll?VIEWS.HOME:VIEWS.ALBUM);setActiveSong(null);}}
       onProgress={handleProgress}/>;
   }
   if(view===VIEWS.ALBUM&&activeAlbum){
@@ -222,7 +295,8 @@ function App() {
     <Screen>
       <AppHeader/>
       <div style={{width:"100%",maxWidth:620}}>
-        <div style={{marginBottom:20}}>
+        <StreakBanner/>
+        <div style={{marginBottom:16}}>
           {addingAlbum?(
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <Input value={newAlbumName} onChange={e=>setNewAlbumName(e.target.value)} placeholder="ALBUM NAME..."/>
@@ -249,12 +323,8 @@ function App() {
                     <div style={{...pixel(6,c.muted),marginTop:4}}>{done}/{allWords.length} learned</div>
                   </div>
                   <Btn onClick={()=>{
-                    const merged={
-                      id:"__all__",
-                      title:"ALL SONGS",
-                      artist:"Every track",
-                      words:allWords
-                    };
+                    const merged={id:"__all__",title:"ALL SONGS",artist:"Every track",
+                      words:albums.flatMap(a=>a.songs.flatMap(s=>s.words))};
                     setActiveSong(merged);
                     setActiveAlbum({id:"__all__",name:"ALL SONGS",songs:[]});
                     setView(VIEWS.STUDY);
@@ -420,6 +490,7 @@ function StudyMode({song,onBack,onProgress}) {
   const [showList,setShowList]=useState(false);
   const [shuffled,setShuffled]=useState(false);
   const [shuffleOrder,setShuffleOrder]=useState([]);
+  const [todayCount,setTodayCount]=useState(loadStreak().todayCards);
 
   const baseFiltered=song.words.map((w,i)=>({...w,_idx:i})).filter(w=>{
     if(filter==="all")return true;
@@ -439,15 +510,15 @@ function StudyMode({song,onBack,onProgress}) {
       setShuffleOrder(order);
     }
     setShuffled(s=>!s);
-    setIdx(0);
-    setFlipped(false);
+    setIdx(0);setFlipped(false);
   };
 
   const card=filtered[idx]||null;
   const go=d=>{setFlipped(false);setIdx(i=>Math.max(0,Math.min(filtered.length-1,i+d)));};
   const mark=st=>{
-    const gi=song.words.findIndex(w=>w.hiragana===card.hiragana&&w.english===card.english);
-    if(gi!==-1)onProgress(gi,st);
+    const {todayCards}=recordCardReviewed();
+    setTodayCount(todayCards);
+    onProgress(card._idx!==undefined?card._idx:song.words.findIndex(w=>w.hiragana===card.hiragana&&w.english===card.english),st);
     setFlipped(false);
     if(idx<filtered.length-1)setIdx(i=>i+1);
   };
@@ -466,14 +537,25 @@ function StudyMode({song,onBack,onProgress}) {
   const statusGlyph={new:"○",remembered:"●",tryAgain:"◐"};
   const statusCol={new:c.muted,remembered:c.greenLit,tryAgain:c.red};
 
+  const streak=loadStreak();
+  const isStreakActive=streak.lastDate===getTodayStr()&&streak.todayCards>=MIN_CARDS_FOR_STREAK;
+
   return (
     <Screen>
       <div style={{width:"100%",maxWidth:620}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-          <Btn onClick={onBack} color="ghost" small>◀ BACK</Btn>
-          <div>
-            <div style={pixel(9,c.amber)}>{song.title}</div>
-            <div style={jp(12,c.muted)}>{song.artist}</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <Btn onClick={onBack} color="ghost" small>◀ BACK</Btn>
+            <div>
+              <div style={pixel(9,c.amber)}>{song.title}</div>
+              <div style={jp(12,c.muted)}>{song.artist}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,
+            border:`2px solid ${c.border}`,padding:"6px 10px",background:c.paper}}>
+            <span style={{fontSize:16,filter:isStreakActive?"none":"grayscale(0.8)"}}>🔥</span>
+            <span style={pixel(8,isStreakActive?c.fire:c.muted)}>{streak.count}</span>
+            <span style={{...pixel(6,c.muted),marginLeft:4}}>{todayCount}/{MIN_CARDS_FOR_STREAK} today</span>
           </div>
         </div>
         <Panel style={{marginBottom:12}}>
