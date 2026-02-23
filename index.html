@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-title" content="あゆみ ayumi"/>
   <title>あゆみ ayumi</title>
@@ -185,9 +186,29 @@ function App() {
       onAdd={song=>{addSongToAlbum(activeAlbum.id,song);setView(VIEWS.ALBUM);}}/>
   );
   if(view===VIEWS.STUDY&&activeAlbum&&activeSong){
-    const live=albums.find(a=>a.id===activeAlbum.id)?.songs.find(s=>s.id===activeSong.id)||activeSong;
-    return <StudyMode song={live} onBack={()=>{setView(VIEWS.ALBUM);setActiveSong(null);}}
-      onProgress={(i,st)=>updateProgress(activeAlbum.id,live.id,i,st)}/>;
+    const isAll=activeAlbum.id==="__all__";
+    const live=isAll
+      ? {...activeSong, words:albums.flatMap(a=>a.songs.flatMap(s=>s.words))}
+      : albums.find(a=>a.id===activeAlbum.id)?.songs.find(s=>s.id===activeSong.id)||activeSong;
+    const handleProgress=(wordIdx,status)=>{
+      if(isAll){
+        // find which album/song this word belongs to by matching index
+        let count=0;
+        for(const a of albums){
+          for(const s of a.songs){
+            if(wordIdx<count+s.words.length){
+              updateProgress(a.id,s.id,wordIdx-count,status);
+              return;
+            }
+            count+=s.words.length;
+          }
+        }
+      } else {
+        updateProgress(activeAlbum.id,live.id,wordIdx,status);
+      }
+    };
+    return <StudyMode song={live} onBack={()=>{setView(isAll?VIEWS.HOME:VIEWS.ALBUM);setActiveSong(null);}}
+      onProgress={handleProgress}/>;
   }
   if(view===VIEWS.ALBUM&&activeAlbum){
     const live=albums.find(a=>a.id===activeAlbum.id)||activeAlbum;
@@ -212,6 +233,37 @@ function App() {
             <Btn onClick={()=>setAddingAlbum(true)} full>[ + NEW ALBUM ]</Btn>
           )}
         </div>
+        {albums.length>0&&(()=>{
+          const allWords=albums.flatMap(a=>a.songs.flatMap(s=>s.words));
+          const done=allWords.filter(w=>w.status==="remembered").length;
+          const pct=allWords.length?Math.round(done/allWords.length*100):0;
+          return (
+            <div style={{marginBottom:16}}>
+              <Panel title="ALL SONGS">
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{flex:1}}>
+                    <div style={{...jp(12,c.muted),marginBottom:6}}>
+                      {allWords.length} total words across {albums.reduce((a,b)=>a+b.songs.length,0)} tracks
+                    </div>
+                    <PixelBar pct={pct}/>
+                    <div style={{...pixel(6,c.muted),marginTop:4}}>{done}/{allWords.length} learned</div>
+                  </div>
+                  <Btn onClick={()=>{
+                    const merged={
+                      id:"__all__",
+                      title:"ALL SONGS",
+                      artist:"Every track",
+                      words:allWords
+                    };
+                    setActiveSong(merged);
+                    setActiveAlbum({id:"__all__",name:"ALL SONGS",songs:[]});
+                    setView(VIEWS.STUDY);
+                  }} small>▶ STUDY ALL</Btn>
+                </div>
+              </Panel>
+            </div>
+          );
+        })()}
         {albums.length===0
           ?<Panel><p style={pixel(8,c.muted)}>NO ALBUMS FOUND.<br/><br/>INSERT COIN TO CONTINUE...</p></Panel>
           :<div style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -366,14 +418,31 @@ function StudyMode({song,onBack,onProgress}) {
   const [flipped,setFlipped]=useState(false);
   const [idx,setIdx]=useState(0);
   const [showList,setShowList]=useState(false);
+  const [shuffled,setShuffled]=useState(false);
+  const [shuffleOrder,setShuffleOrder]=useState([]);
 
-  const filtered=song.words.filter(w=>{
+  const baseFiltered=song.words.map((w,i)=>({...w,_idx:i})).filter(w=>{
     if(filter==="all")return true;
     if(filter==="new")return w.status==="new";
     if(filter==="tryAgain")return w.status==="tryAgain";
     if(filter==="remembered")return w.status==="remembered";
     return true;
   });
+
+  const filtered=shuffled&&shuffleOrder.length
+    ?shuffleOrder.map(i=>baseFiltered[i]).filter(Boolean)
+    :baseFiltered;
+
+  const toggleShuffle=()=>{
+    if(!shuffled){
+      const order=[...Array(baseFiltered.length).keys()].sort(()=>Math.random()-.5);
+      setShuffleOrder(order);
+    }
+    setShuffled(s=>!s);
+    setIdx(0);
+    setFlipped(false);
+  };
+
   const card=filtered[idx]||null;
   const go=d=>{setFlipped(false);setIdx(i=>Math.max(0,Math.min(filtered.length-1,i+d)));};
   const mark=st=>{
@@ -413,8 +482,9 @@ function StudyMode({song,onBack,onProgress}) {
               options={[["kanji","KANJI+KANA"],["kanjiOnly","KANJI ONLY"],["hiragana","HIRAGANA"],["english","ENGLISH"]]}/>
             {!isKanjiOnly&&<RetroSelect label="FLIP" value={revealMode} onChange={setRevealMode}
               options={[["english","ENGLISH"],["hiragana","HIRAGANA"],["kanji","KANJI"]]}/>}
-            <RetroSelect label="FILTER" value={filter} onChange={v=>{setFilter(v);setIdx(0);setFlipped(false);}}
+            <RetroSelect label="FILTER" value={filter} onChange={v=>{setFilter(v);setIdx(0);setFlipped(false);setShuffleOrder([]);}}
               options={[["all","ALL"],["new","NEW"],["tryAgain","TRY AGAIN"],["remembered","DONE"]]}/>
+            <Btn onClick={toggleShuffle} color={shuffled?"gold":"ghost"} small>🔀 {shuffled?"ON":"OFF"}</Btn>
             <Btn onClick={()=>setShowList(true)} color="ghost" small>LIST</Btn>
           </div>
         </Panel>
