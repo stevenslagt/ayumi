@@ -38,7 +38,7 @@ const c = {
 };
 
 const VIEWS = { HOME:"home", ALBUM:"album", ADD:"add", STUDY:"study" };
-const MIN_CARDS_FOR_STREAK = 5; // cards reviewed to count as a study day
+const MIN_CARDS_FOR_STREAK = 10; // cards reviewed to count as a study day
 
 function storageGet(key) {
   try { const v=localStorage.getItem(key); return v?JSON.parse(v):null; } catch { return null; }
@@ -176,8 +176,11 @@ function PixelBar({pct,color=c.gold}) {
 
 // ── Streak Display ─────────────────────────────────────────────────
 function StreakBanner() {
-  const [streak,setStreak]=useState({count:0,lastDate:null,todayCards:0});
-  useEffect(()=>{ setStreak(loadStreak()); },[]);
+  const [streak,setStreak]=useState(()=>loadStreak());
+  useEffect(()=>{
+    const interval=setInterval(()=>setStreak(loadStreak()),2000);
+    return ()=>clearInterval(interval);
+  },[]);
 
   const today=getTodayStr();
   const isActiveToday=streak.lastDate===today&&streak.todayCards>=MIN_CARDS_FOR_STREAK;
@@ -490,7 +493,11 @@ function StudyMode({song,onBack,onProgress}) {
   const [showList,setShowList]=useState(false);
   const [shuffled,setShuffled]=useState(false);
   const [shuffleOrder,setShuffleOrder]=useState([]);
-  const [todayCount,setTodayCount]=useState(loadStreak().todayCards);
+  const [todayCount,setTodayCount]=useState(()=>loadStreak().todayCards);
+
+  useEffect(()=>{
+    setTodayCount(loadStreak().todayCards);
+  },[]);
 
   const baseFiltered=song.words.map((w,i)=>({...w,_idx:i})).filter(w=>{
     if(filter==="all")return true;
@@ -518,6 +525,9 @@ function StudyMode({song,onBack,onProgress}) {
   const mark=st=>{
     const {todayCards}=recordCardReviewed();
     setTodayCount(todayCards);
+    const best=storageGet("ayumi-streak-best")||0;
+    const {count}=loadStreak();
+    if(count>best)storageSet("ayumi-streak-best",count);
     onProgress(card._idx!==undefined?card._idx:song.words.findIndex(w=>w.hiragana===card.hiragana&&w.english===card.english),st);
     setFlipped(false);
     if(idx<filtered.length-1)setIdx(i=>i+1);
